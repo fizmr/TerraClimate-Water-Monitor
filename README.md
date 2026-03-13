@@ -116,6 +116,7 @@ This project evolved from a Google Colab notebook analyzing NASA GRACE satellite
 # 🌍 TerraClimate Su Depolama İzleme Platformu
 
 Google Earth Engine ve TerraClimate veri seti kullanılarak küresel su depolama anomalilerini görselleştiren interaktif web platformu. FastAPI + Leaflet.js ile geliştirilmiştir.
+
 ---
 
 ## Özellikler
