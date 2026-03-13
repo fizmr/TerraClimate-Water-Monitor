@@ -3,7 +3,7 @@ Water Storage Monitor
 TerraClimate + GRACE · GEE live · smooth scroll UI
 """
 
-import os, json, io, base64, math, hashlib
+import os, json, io, base64, math, hashlib, re
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -20,8 +20,8 @@ import uvicorn, threading, time
 
 # ── CONFIG ────────────────────────────────────────────────────────────
 KEY_FILE    = "gee-key.json"
-GEE_PROJECT = ""
-NGROK_TOKEN = ""
+GEE_PROJECT = ""   # GEE proje ID'nizi buraya girin
+NGROK_TOKEN = ""   # ngrok token'ınızı buraya girin
 CACHE_DIR   = "gee_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -275,15 +275,16 @@ def fetch_tc_months(code, var='soil'):
     fc     = ee.FeatureCollection(LSIB).filter(ee.Filter.eq('country_na', name))
     region = fc.geometry().bounds()
 
-    # Grid adımını hesapla — max ~300 nokta (GEE 5000 element limiti için güvenli)
+    # Grid adımını hesapla
     lon_min, lon_max, lat_min, lat_max = _get_bounds(region)
     lon_range = lon_max - lon_min
     lat_range = lat_max - lat_min
-    import math
-    step = max(0.15, math.sqrt((lon_range * lat_range) / 300))
-    step = round(step * 4) / 4   # 0.25'in katlarına yuvarla
-    step = max(step, 0.15)
-    print(f"[fetch_tc_months] {code}/{var}: bbox={lon_range:.1f}°×{lat_range:.1f}°, step={step:.2f}°, ~{int(lon_range/step)*int(lat_range/step)} nokta")
+    area      = lon_range * lat_range
+    if   area > 3000: step = 1.0
+    elif area > 1000: step = 0.5
+    elif area > 300:  step = 0.3
+    elif area > 80:   step = 0.2
+    else:             step = 0.15
 
     # Grid noktaları bir kez oluştur
     features = []
@@ -976,62 +977,6 @@ def api_provinces(code: str,
         raise HTTPException(500, str(e))
 
 
-@app.get("/api/render/province")
-def api_province_render(
-    lat:    float = Query(...),
-    lon:    float = Query(...),
-    code:   str   = Query(...),
-    var:    str   = Query(default='soil'),
-    mode:   str   = Query(default='monthly'),
-    period: str   = Query(default='all')
-):
-    """Tıklanan noktanın ilini bul ve o ilin heatmap'ini döndür."""
-    if var not in TC_VARS: var = 'soil'
-    c = code.upper()
-    try:
-        gaul_name   = get_gaul_name(c)
-        pt          = ee.Geometry.Point([lon, lat])
-        province_fc = (ee.FeatureCollection('FAO/GAUL/2015/level1')
-                         .filterBounds(pt)
-                         .filter(ee.Filter.eq('ADM0_NAME', gaul_name))
-                         .limit(1))
-        info = province_fc.getInfo()
-        if not info['features']:
-            raise HTTPException(404, "Bu noktada il bulunamadı")
-        feat        = info['features'][0]
-        prov_name   = feat['properties'].get('ADM1_NAME', 'Unknown')
-        border_geom = feat['geometry']
-
-        safe = re.sub(r'[^A-Za-z0-9_]', '_', prov_name)
-        ck   = cache_key(f"{c}_{safe}", f"prov_{var}_{mode}", period)
-        records = cache_get(ck)
-        if not records:
-            scale  = TC_VARS[var]['scale']
-            region = ee.Feature(border_geom).geometry().bounds()
-            col    = ee.ImageCollection(TC_COL).select(var)
-            if mode == 'monthly':
-                image = col.filterDate('1990-01-01','2024-01-01').mean().multiply(scale)
-            else:
-                yr       = int(period)
-                baseline = col.filterDate(BASELINE_START,BASELINE_END).mean().multiply(scale)
-                annual   = col.filterDate(f"{yr}-01-01",f"{yr+1}-01-01").mean().multiply(scale)
-                image    = annual.subtract(baseline)
-            records = _sample_region(image, region, var)
-            if not records:
-                raise HTTPException(404, "Bu ilde veri bulunamadı")
-            cache_set(ck, records)
-
-        vinfo = TC_VARS[var]
-        img   = render_heatmap(c, records, border_geom, var)
-        stats = _lwe_stats(records)
-        return {"img": img, "stats": stats, "province": prov_name,
-                "label": vinfo['label'], "unit": vinfo['unit']}
-    except HTTPException: raise
-    except Exception as e:
-        import traceback
-        print(f"[province render] {e}\n{traceback.format_exc()}")
-        raise HTTPException(500, str(e))
-
 @app.get("/", response_class=HTMLResponse)
 def index(): return HTML
 
@@ -1254,7 +1199,6 @@ const S={code:null,mode:'monthly',period:'1',tab:'heatmap',var:'soil',
          apiKey:localStorage.getItem('g_oai')||null,ctx:'',
          countries:[],map:null,marker:null,bboxCache:{},
          provMonth:'all'};  // provinces monthly ay seçimi
-const PROVINCE_ZOOM=6; // bu zoom ve üstünde tıklama → il modu
 
 async function init(){
   S.map=L.map('map',{zoomControl:true,attributionControl:false});
@@ -1263,11 +1207,9 @@ async function init(){
 
   S.countries=await fetch('/api/countries').then(r=>r.json());
 
-  // Map click: zoom < PROVINCE_ZOOM → ülke, zoom >= → il
+  // Map click
   S.map.on('click', e=>{
     const{lat,lng}=e.latlng;
-    const zoom=S.map.getZoom();
-    // Ülkeyi bul
     let clickedCode=null, clickedName=null;
     for(const c of S.countries){
       const bb=S.bboxCache[c.code];
@@ -1275,12 +1217,7 @@ async function init(){
         clickedCode=c.code; clickedName=c.name; break;
       }
     }
-    if(zoom >= PROVINCE_ZOOM && (clickedCode||S.code)){
-      // İl modu: tıklanan koordinatı gönder
-      const useCode = clickedCode||S.code;
-      renderProvince(lat, lng, useCode);
-    } else if(clickedCode){
-      // Ülke modu
+    if(clickedCode){
       if(S.code===clickedCode) analyzePoint(lat,lng);
       else loadCountry(clickedCode, clickedName);
     } else if(S.code){
@@ -1300,13 +1237,6 @@ async function init(){
   });
   S.map.on('mouseout',hideTip);
 
-  S.map.on('zoomend',()=>{
-    const cue=document.getElementById('heroCue');
-    if(!cue) return;
-    cue.textContent = S.map.getZoom()>=PROVINCE_ZOOM
-      ? 'Click to see province detail'
-      : 'Click country · zoom in for provinces';
-  });
 
     // Eager: fetch ALL country bboxes in background so every country is clickable
   prefetchAllBboxes();
@@ -1339,49 +1269,6 @@ async function fetchBbox(code){
 const tip=document.getElementById('tip');
 function showTip(name,e){tip.textContent=name;tip.classList.add('on');tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY-30)+'px'}
 function hideTip(){tip.classList.remove('on')}
-
-async function renderProvince(lat, lng, code){
-  // Panel açık değilse aç
-  if(!document.getElementById('panel').classList.contains('on')){
-    document.getElementById('hero').classList.add('away');
-    document.getElementById('panel').classList.add('on');
-    buildPeriods();
-  }
-
-  const mode   = S.mode;
-  const period = mode==='monthly' ? 'all' : (S.period || YEARS[YEARS.length-1]);
-
-  // Heatmap tabına geç
-  S.tab='heatmap';
-  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.t==='heatmap'));
-  document.getElementById('chartBox').style.display='flex';
-  document.getElementById('provBox').classList.remove('on');
-
-  showLoad(true,'İl yükleniyor...');
-
-  const url=`/api/render/province?lat=${lat}&lon=${lng}&code=${code}&var=${S.var}&mode=${mode}&period=${period}`;
-  let r=null;
-  try{
-    const resp=await fetch(url);
-    r=await resp.json();
-    if(!resp.ok) throw new Error(r?.detail||'Hata '+resp.status);
-  }catch(err){
-    showLoad(false);
-    document.getElementById('cinfo').textContent='İl bulunamadı: '+err.message;
-    return;
-  }
-
-  if(r?.img){
-    S.code = code;
-    document.getElementById('pcname').textContent = r.province || code;
-    setImg(r.img);
-    const statStr = r.stats ? ` · ort: ${r.stats.mean} ${r.unit}` : '';
-    document.getElementById('cinfo').textContent = `${r.province} · ${r.label}${statStr}`;
-    S.ctx = `Province: ${r.province} (${code}). Var: ${r.label}. Stats: ${JSON.stringify(r.stats)}.`;
-  } else {
-    showLoad(false);
-  }
-}
 
 function goBack(){
   document.getElementById('hero').classList.remove('away');
