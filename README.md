@@ -18,7 +18,7 @@ Interactive web platform for visualizing global water storage anomalies using Go
 - 📅 **Monthly climatology** — multi-year averages per month (1990–2023)
 - 📈 **Annual anomaly analysis** — deviation from 1990–2019 baseline
 - 🔢 **Three climate variables** — Soil Moisture, Climate Water Deficit, Palmer Drought Index
-- 🤖 **AI analysis assistant** — optional OpenAI GPT-4o-mini integration
+- 🤖 **AI analysis assistant** — optional OpenAI GPT-3 integration
 - ⚡ **File-based caching** — GEE queries cached locally for fast repeat access
 
 ---
@@ -123,10 +123,10 @@ Google Earth Engine ve TerraClimate veri seti kullanılarak küresel su depolama
 
 - 🗺️ **80+ ülke desteği** — haritada herhangi bir ülkeye tıklayarak veri yükleyin
 - 🏙️ **İl bazlı choropleth haritaları** — FAO GAUL level-1 sınırları, hover tooltip desteğiyle
-- 📅 **Aylık klimatoloji** — aylık bazda çok yıllık ortalamalar (1990–2023)
+- 📅 **Aylık klimatoloji** — aylık bazda, çok yıllık ortalamalar (1990–2023)
 - 📈 **Yıllık anomali analizi** — 1990–2019 baseline'dan sapma
 - 🔢 **Üç iklim değişkeni** — Toprak Nemi, Su Açığı, Palmer Kuraklık İndeksi
-- 🤖 **AI analiz asistanı** — isteğe bağlı OpenAI GPT-4o-mini entegrasyonu
+- 🤖 **AI analiz asistanı** — isteğe bağlı OpenAI GPT-3 entegrasyonu
 - ⚡ **Dosya tabanlı önbellekleme** — GEE sorguları yerel olarak cache'lenerek tekrar erişimlerde hız sağlanır
 
 ---
